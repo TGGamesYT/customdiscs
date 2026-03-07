@@ -1,26 +1,38 @@
 package dashketch.mods.custom_music_discs;
 
+import com.mojang.logging.LogUtils;
+import dashketch.mods.custom_music_discs.item.ModItems;
+import dashketch.mods.custom_music_discs.network.MusicUploadPayload;
+import dashketch.mods.custom_music_discs.network.ServerPayloadHandler;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
-import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.neoforged.neoforge.registries.DeferredHolder;
-import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import org.slf4j.Logger;
+
+import static dashketch.mods.custom_music_discs.item.ModItems.BLANK_DISC;
+import static dashketch.mods.custom_music_discs.item.ModItems.DISC_BURNER;
 
 @Mod(Custom_music_discs.MODID)
 public class Custom_music_discs {
     public static final String MODID = "custom_music_discs";
+    public static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(MODID);
+    public Custom_music_discs(IEventBus modEventBus, ModContainer modContainer) {
+        ModItems.register(modEventBus);
+        CREATIVE_MODE_TABS.register(modEventBus);
+
+        modEventBus.addListener(this::registerNetworking);
+    }
+
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
-
-    // Registering the two items
-    public static final DeferredItem<Item> BLANK_CUSTOM_DISC = ITEMS.registerSimpleItem("blank_custom_disc", new Item.Properties().stacksTo(1));
-    public static final DeferredItem<Item> DISC_BURNER = ITEMS.registerSimpleItem("disc_burner", new Item.Properties());
 
     // Registering the Creative Tab
     @SuppressWarnings("unused")
@@ -28,14 +40,21 @@ public class Custom_music_discs {
             () -> CreativeModeTab.builder()
                     .title(Component.translatable("itemGroup.custom_music_discs"))
                     .withTabsBefore(CreativeModeTabs.COMBAT)
-                    .icon(() -> BLANK_CUSTOM_DISC.get().getDefaultInstance())
+                    .icon(() -> BLANK_DISC.get().getDefaultInstance())
                     .displayItems((parameters, output) -> {
-                        output.accept(BLANK_CUSTOM_DISC.get());
+                        output.accept(BLANK_DISC.get());
                         output.accept(DISC_BURNER.get());
                     }).build());
 
-    public Custom_music_discs(IEventBus modEventBus) {
-        ITEMS.register(modEventBus);
-        CREATIVE_MODE_TABS.register(modEventBus);
+    private void registerNetworking(final RegisterPayloadHandlersEvent event) {
+        // We define the protocol version ("1")
+        final PayloadRegistrar registrar = event.registrar("1");
+
+        // We explicitly tell NeoForge: "This packet is allowed to go TO the SERVER"
+        registrar.playToServer(
+                MusicUploadPayload.TYPE,
+                MusicUploadPayload.CODEC,
+                ServerPayloadHandler::handleData
+        );
     }
 }
