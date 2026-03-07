@@ -23,6 +23,7 @@ public class Custom_music_discs {
     public static final DeferredItem<Item> DISC_BURNER = ITEMS.registerSimpleItem("disc_burner", new Item.Properties());
 
     // Registering the Creative Tab
+    @SuppressWarnings("unused")
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> CUSTOM_DISCS_TAB = CREATIVE_MODE_TABS.register("custom_music_discs",
             () -> CreativeModeTab.builder()
                     .title(Component.translatable("itemGroup.custom_music_discs"))
