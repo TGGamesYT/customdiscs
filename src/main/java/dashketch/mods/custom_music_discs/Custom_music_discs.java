@@ -25,7 +25,7 @@ public class Custom_music_discs {
     // Registering the Creative Tab
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> CUSTOM_DISCS_TAB = CREATIVE_MODE_TABS.register("custom_music_discs",
             () -> CreativeModeTab.builder()
-                    .title(Component.translatable("itemGroup." + MODID))
+                    .title(Component.translatable("itemGroup.custom_music_discs"))
                     .withTabsBefore(CreativeModeTabs.COMBAT)
                     .icon(() -> BLANK_CUSTOM_DISC.get().getDefaultInstance())
                     .displayItems((parameters, output) -> {

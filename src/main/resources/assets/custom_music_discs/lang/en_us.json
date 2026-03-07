@@ -1,4 +1,5 @@
 {
   "item.custom_music_discs.blank_custom_disc": "Blank Custom Disc",
-  "item.custom_music_discs.disc_burner": "Disc Burner"
+  "item.custom_music_discs.disc_burner": "Disc Burner",
+  "itemGroup.custom_music_discs": "Custom Music Discs"
 }
