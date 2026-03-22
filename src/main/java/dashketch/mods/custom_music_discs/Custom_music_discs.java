@@ -4,18 +4,25 @@ import com.mojang.logging.LogUtils;
 import dashketch.mods.custom_music_discs.item.ModItems;
 import dashketch.mods.custom_music_discs.network.MusicUploadPayload;
 import dashketch.mods.custom_music_discs.network.ServerPayloadHandler;
+import dashketch.mods.custom_music_discs.server.recipeGen;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.data.DataGenerator;
+import net.minecraft.data.PackOutput;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.data.event.GatherDataEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import org.slf4j.Logger;
+
+import java.util.concurrent.CompletableFuture;
 
 import static dashketch.mods.custom_music_discs.item.ModItems.BLANK_DISC;
 import static dashketch.mods.custom_music_discs.item.ModItems.DISC_BURNER;
@@ -30,6 +37,8 @@ public class Custom_music_discs {
         CREATIVE_MODE_TABS.register(modEventBus);
 
         modEventBus.addListener(this::registerNetworking);
+
+        modEventBus.addListener(this::gatherData);
     }
 
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
@@ -47,14 +56,20 @@ public class Custom_music_discs {
                     }).build());
 
     private void registerNetworking(final RegisterPayloadHandlersEvent event) {
-        // We define the protocol version ("1")
         final PayloadRegistrar registrar = event.registrar("1");
 
-        // We explicitly tell NeoForge: "This packet is allowed to go TO the SERVER"
         registrar.playToServer(
                 MusicUploadPayload.TYPE,
                 MusicUploadPayload.CODEC,
                 ServerPayloadHandler::handleData
         );
+    }
+
+    private void gatherData(final GatherDataEvent event) {
+        DataGenerator generator = event.getGenerator();
+        PackOutput output = generator.getPackOutput();
+        CompletableFuture<HolderLookup.Provider> lookupProvider = event.getLookupProvider();
+
+        generator.addProvider(event.includeServer(), new recipeGen(output, lookupProvider));
     }
 }

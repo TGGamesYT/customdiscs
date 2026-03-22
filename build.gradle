@@ -177,3 +177,11 @@ idea {
         downloadJavadoc = true
     }
 }
+
+sourceSets {
+    main {
+        resources {
+            srcDir 'src/generated/resources'
+        }
+    }
+}
