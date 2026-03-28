@@ -24,6 +24,11 @@ public class ServerPayloadHandler {
             //1. Validation
             if (!offhandItem.is(ModItems.BLANK_DISC.get())) {
                 player.sendSystemMessage(Component.literal("§cError: Hold a Blank Disc in your off-hand!"));
+                try {
+                    Thread.sleep(6000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
                 return;
             }
 
