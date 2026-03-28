@@ -17,12 +17,14 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import org.essentials.custom_background_music.AudioManager;
 
 import java.io.File;
 
 @EventBusSubscriber(modid = "custom_music_discs", bus = EventBusSubscriber.Bus.GAME)
 public class JukeboxInterceptor {
     static JukeboxAudioEngine engine = JukeboxAudioEngine.getInstance();
+    static AudioManager am = AudioManager.getInstance();
 
     private static BlockPos playingPos = null;
 
@@ -38,6 +40,8 @@ public class JukeboxInterceptor {
             // Let Vanilla handle the ejection.
             if (state.getValue(JukeboxBlock.HAS_RECORD)) {
                 engine.stop();
+            } else if (!state.getValue(JukeboxBlock.HAS_RECORD)) {
+                am.stop();
             }
 
             // 2. INSERTION LOGIC
