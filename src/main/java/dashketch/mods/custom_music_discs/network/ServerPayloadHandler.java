@@ -22,15 +22,14 @@ public class ServerPayloadHandler {
             Player player = context.player();
             ItemStack offhandItem = player.getOffhandItem();
 
-            //1. Validation
+            // 1. Validation
             if (!offhandItem.is(ModItems.BLANK_DISC.get())) {
-                player.sendSystemMessage(Component.literal("§cError: Hold a Blank Disc in your off-hand!"));
-                LOGGER.warn("Player must hold a Blank Disc in their off-hand!");
-                try {
-                    Thread.sleep(6000);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
+                // Only send the error message on the very first chunk to prevent spam
+                if (data.isFirstChunk()) {
+                    player.sendSystemMessage(Component.literal("§cError: Hold a Blank Disc in your off-hand!"));
+                    LOGGER.warn("Player {} must hold a Blank Disc in their off-hand!", player.getName().getString());
                 }
+                // Always return, regardless of what chunk it is, so the file isn't written
                 return;
             }
 
@@ -63,14 +62,16 @@ public class ServerPayloadHandler {
                                 customData.update(tag -> tag.putString("SelectedSong", safeName))
                         );
 
-                        //4. Add enchant glint
+                        // 4. Add enchant glint
                         offhandItem.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true);
 
                         player.sendSystemMessage(Component.literal("§aDisk Burned Successfully!"));
                     }
                 }
             } catch (Exception e) {
-                LOGGER.error("Failed to save music file", e);
+                if (data.isFirstChunk()) {
+                    LOGGER.error("Failed to save music file", e);
+                }
             }
         });
     }
