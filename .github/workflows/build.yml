@@ -6,10 +6,14 @@ on:
   release:
     types: [ published ]
   workflow_dispatch:
+
 jobs:
   build:
     name: Build Mod
     runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.mod_info.outputs.name }}
+      version: ${{ steps.mod_info.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -20,10 +24,26 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Read Gradle version from wrapper
+        id: gradle_ver
+        run: |
+          FALLBACK="9.2.1"
+          PROPS="gradle/wrapper/gradle-wrapper.properties"
+          if [ -f "$PROPS" ]; then
+            VER=$(grep "^distributionUrl" "$PROPS" | sed -E 's/.*gradle-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
+            if [ -z "$VER" ]; then
+              VER="$FALLBACK"
+            fi
+          else
+            VER="$FALLBACK"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "Using Gradle $VER"
+
       - name: Set up Gradle
         uses: gradle/gradle-build-action@v2
         with:
-          gradle-version: 8.14.4  # or whatever version your mod uses
+          gradle-version: ${{ steps.gradle_ver.outputs.version }}
 
       - name: Build mod
         run: gradle build
@@ -31,18 +51,48 @@ jobs:
       - name: Read mod name and version
         id: mod_info
         run: |
-          NAME=$(grep "^archives_base_name" gradle.properties | cut -d'=' -f2)
-          VERSION=$(grep "^mod_version" gradle.properties | cut -d'=' -f2)
+          # Find which gradle.properties key build.gradle uses for version + archivesName.
+          # Handles: `version = mod_version`, `version = project.mod_version`,
+          #          `archivesName = mod_id`, `archivesName = project.mod_id`
+          extract_key() {
+            local field="$1"
+            local file="$2"
+            grep -E "^[[:space:]]*${field}[[:space:]]*=" "$file" \
+              | head -n1 \
+              | sed -E "s/^[[:space:]]*${field}[[:space:]]*=[[:space:]]*(project\.)?([A-Za-z_][A-Za-z0-9_]*).*/\2/"
+          }
+
+          GRADLE_FILE=""
+          [ -f build.gradle ] && GRADLE_FILE="build.gradle"
+          [ -z "$GRADLE_FILE" ] && [ -f build.gradle.kts ] && GRADLE_FILE="build.gradle.kts"
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "No build.gradle or build.gradle.kts found"
+            exit 1
+          fi
+
+          VERSION_KEY=$(extract_key "version" "$GRADLE_FILE")
+          NAME_KEY=$(extract_key "archivesName" "$GRADLE_FILE")
+
+          [ -z "$VERSION_KEY" ] && VERSION_KEY="mod_version"
+          [ -z "$NAME_KEY" ] && NAME_KEY="archives_base_name"
+
+          echo "Resolved version key: $VERSION_KEY"
+          echo "Resolved name key: $NAME_KEY"
+
+          VERSION=$(grep "^${VERSION_KEY}[[:space:]]*=" gradle.properties | cut -d'=' -f2 | tr -d ' \r')
+          NAME=$(grep "^${NAME_KEY}[[:space:]]*=" gradle.properties | cut -d'=' -f2 | tr -d ' \r')
 
           if [ -z "$NAME" ] || [ -z "$VERSION" ]; then
-            echo "Failed to read mod info from gradle.properties"
+            echo "Failed to resolve mod name/version"
+            echo "  NAME='$NAME' (key=$NAME_KEY)"
+            echo "  VERSION='$VERSION' (key=$VERSION_KEY)"
             exit 1
           fi
 
           JAR="build/libs/${NAME}-${VERSION}.jar"
-
           if [ ! -f "$JAR" ]; then
             echo "Expected jar not found: $JAR"
+            ls -la build/libs/ || true
             exit 1
           fi
 
@@ -60,6 +110,8 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -70,18 +122,12 @@ jobs:
           name: minecraft-mod
           path: ./release-artifacts/
 
-      - name: Read mod info again (for tagging)
-        id: mod_info
-        run: |
-          NAME=$(grep "^archives_base_name" gradle.properties | cut -d'=' -f2)
-          VERSION=$(grep "^mod_version" gradle.properties | cut -d'=' -f2)
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Find next available release tag
         id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BASE="${{ steps.mod_info.outputs.name }}-${{ steps.mod_info.outputs.version }}"
+          BASE="${{ needs.build.outputs.name }}-${{ needs.build.outputs.version }}"
           TAG="$BASE"
           i=1
           while gh release view "$TAG" >/dev/null 2>&1; do
@@ -90,18 +136,9 @@ jobs:
           done
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Create release
-        uses: softprops/action-gh-release@v1
+      - name: Create release and upload jar
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Upload jar to release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
           files: ./release-artifacts/*.jar
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
