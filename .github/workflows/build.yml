@@ -10,18 +10,108 @@ jobs:
   build:
     name: Build Mod
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       name: ${{ steps.mod_info.outputs.name }}
       version: ${{ steps.mod_info.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify this is a Minecraft mod
+        run: |
+          # Look for any of the common mod loader marker files
+          FOUND=""
+          for f in \
+            src/main/resources/fabric.mod.json \
+            src/main/resources/quilt.mod.json \
+            src/main/resources/META-INF/mods.toml \
+            src/main/resources/META-INF/neoforge.mods.toml; do
+            if [ -f "$f" ]; then
+              FOUND="$f"
+              break
+            fi
+          done
+
+          if [ -z "$FOUND" ]; then
+            echo "::error::This does not appear to be a Minecraft mod."
+            echo "No loader manifest found (fabric.mod.json, quilt.mod.json, mods.toml, or neoforge.mods.toml)."
+            exit 1
+          fi
+
+          echo "Detected Minecraft mod via: $FOUND"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
+
+      - name: Read mod info from gradle files
+        id: mod_info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find which gradle.properties key build.gradle uses for version + archivesName.
+          extract_key() {
+            local field="$1"
+            local file="$2"
+            grep -E "^[[:space:]]*${field}[[:space:]]*=" "$file" \
+              | head -n1 \
+              | sed -E "s/^[[:space:]]*${field}[[:space:]]*=[[:space:]]*(project\.)?([A-Za-z_][A-Za-z0-9_]*).*/\2/"
+          }
+
+          GRADLE_FILE=""
+          [ -f build.gradle ] && GRADLE_FILE="build.gradle"
+          [ -z "$GRADLE_FILE" ] && [ -f build.gradle.kts ] && GRADLE_FILE="build.gradle.kts"
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "::error::No build.gradle or build.gradle.kts found"
+            exit 1
+          fi
+
+          VERSION_KEY=$(extract_key "version" "$GRADLE_FILE")
+          NAME_KEY=$(extract_key "archivesName" "$GRADLE_FILE")
+          [ -z "$VERSION_KEY" ] && VERSION_KEY="mod_version"
+          [ -z "$NAME_KEY" ] && NAME_KEY="archives_base_name"
+
+          BASE_VERSION=$(grep "^${VERSION_KEY}[[:space:]]*=" gradle.properties | cut -d'=' -f2 | tr -d ' \r')
+          NAME=$(grep "^${NAME_KEY}[[:space:]]*=" gradle.properties | cut -d'=' -f2 | tr -d ' \r')
+
+          if [ -z "$NAME" ] || [ -z "$BASE_VERSION" ]; then
+            echo "::error::Failed to resolve mod name/version"
+            echo "  NAME='$NAME' (key=$NAME_KEY)"
+            echo "  VERSION='$BASE_VERSION' (key=$VERSION_KEY)"
+            exit 1
+          fi
+
+          echo "Base version from gradle.properties: $BASE_VERSION"
+          echo "Mod name: $NAME"
+
+          # Find a free version: try BASE_VERSION first, then BASE_VERSION.1, .2, ...
+          VERSION="$BASE_VERSION"
+          i=1
+          while gh release view "$VERSION" >/dev/null 2>&1; do
+            VERSION="${BASE_VERSION}.${i}"
+            i=$((i+1))
+          done
+
+          echo "Resolved free version: $VERSION"
+
+          # If we bumped, write the new version back into gradle.properties so the build uses it
+          if [ "$VERSION" != "$BASE_VERSION" ]; then
+            echo "Bumping ${VERSION_KEY} in gradle.properties: $BASE_VERSION -> $VERSION"
+            sed -i -E "s|^(${VERSION_KEY}[[:space:]]*=[[:space:]]*).*|\1${VERSION}|" gradle.properties
+          fi
+
+          echo "version_key=$VERSION_KEY" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Determine release tag
+        id: tag
+        run: echo "tag=${{ steps.mod_info.outputs.version }}" >> $GITHUB_OUTPUT
 
       - name: Read Gradle version from wrapper
         id: gradle_ver
@@ -30,9 +120,7 @@ jobs:
           PROPS="gradle/wrapper/gradle-wrapper.properties"
           if [ -f "$PROPS" ]; then
             VER=$(grep "^distributionUrl" "$PROPS" | sed -E 's/.*gradle-([0-9]+\.[0-9]+(\.[0-9]+)?)-.*/\1/')
-            if [ -z "$VER" ]; then
-              VER="$FALLBACK"
-            fi
+            [ -z "$VER" ] && VER="$FALLBACK"
           else
             VER="$FALLBACK"
           fi
@@ -47,63 +135,24 @@ jobs:
       - name: Build mod
         run: gradle build
 
-      - name: Read mod name and version
-        id: mod_info
+      - name: Locate built jar
+        id: jar
         run: |
-          # Find which gradle.properties key build.gradle uses for version + archivesName.
-          # Handles: `version = mod_version`, `version = project.mod_version`,
-          #          `archivesName = mod_id`, `archivesName = project.mod_id`
-          extract_key() {
-            local field="$1"
-            local file="$2"
-            grep -E "^[[:space:]]*${field}[[:space:]]*=" "$file" \
-              | head -n1 \
-              | sed -E "s/^[[:space:]]*${field}[[:space:]]*=[[:space:]]*(project\.)?([A-Za-z_][A-Za-z0-9_]*).*/\2/"
-          }
-
-          GRADLE_FILE=""
-          [ -f build.gradle ] && GRADLE_FILE="build.gradle"
-          [ -z "$GRADLE_FILE" ] && [ -f build.gradle.kts ] && GRADLE_FILE="build.gradle.kts"
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "No build.gradle or build.gradle.kts found"
-            exit 1
-          fi
-
-          VERSION_KEY=$(extract_key "version" "$GRADLE_FILE")
-          NAME_KEY=$(extract_key "archivesName" "$GRADLE_FILE")
-
-          [ -z "$VERSION_KEY" ] && VERSION_KEY="mod_version"
-          [ -z "$NAME_KEY" ] && NAME_KEY="archives_base_name"
-
-          echo "Resolved version key: $VERSION_KEY"
-          echo "Resolved name key: $NAME_KEY"
-
-          VERSION=$(grep "^${VERSION_KEY}[[:space:]]*=" gradle.properties | cut -d'=' -f2 | tr -d ' \r')
-          NAME=$(grep "^${NAME_KEY}[[:space:]]*=" gradle.properties | cut -d'=' -f2 | tr -d ' \r')
-
-          if [ -z "$NAME" ] || [ -z "$VERSION" ]; then
-            echo "Failed to resolve mod name/version"
-            echo "  NAME='$NAME' (key=$NAME_KEY)"
-            echo "  VERSION='$VERSION' (key=$VERSION_KEY)"
-            exit 1
-          fi
-
+          NAME="${{ steps.mod_info.outputs.name }}"
+          VERSION="${{ steps.mod_info.outputs.version }}"
           JAR="build/libs/${NAME}-${VERSION}.jar"
           if [ ! -f "$JAR" ]; then
-            echo "Expected jar not found: $JAR"
+            echo "::error::Expected jar not found: $JAR"
             ls -la build/libs/ || true
             exit 1
           fi
-
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "jar=$JAR" >> $GITHUB_OUTPUT
+          echo "path=$JAR" >> $GITHUB_OUTPUT
 
       - name: Upload mod artifact
         uses: actions/upload-artifact@v4
         with:
           name: minecraft-mod
-          path: ${{ steps.mod_info.outputs.jar }}
+          path: ${{ steps.jar.outputs.path }}
 
   create-release:
     name: Create GitHub Release
@@ -121,23 +170,9 @@ jobs:
           name: minecraft-mod
           path: ./release-artifacts/
 
-      - name: Find next available release tag
-        id: tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BASE="${{ needs.build.outputs.name }}-${{ needs.build.outputs.version }}"
-          TAG="$BASE"
-          i=1
-          while gh release view "$TAG" >/dev/null 2>&1; do
-            TAG="${BASE}($i)"
-            i=$((i+1))
-          done
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
       - name: Create release and upload jar
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: ${{ needs.build.outputs.tag }}
           files: ./release-artifacts/*.jar
